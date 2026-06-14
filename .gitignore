@@ -11,7 +11,8 @@ physionet.org/
 # Generated artifacts
 cache/
 models/
-reports/figures/*.png
+# NOTE: reports/figures/*.png are intentionally committed so they render in
+# REPORT.md on GitHub.
 
 # Logs
 *.log

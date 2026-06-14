@@ -115,9 +115,16 @@ def eval_multilabel(feats, labels, test_idx) -> dict:
     ax.legend(); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout(); fig.savefig(FIG / "multilabel_per_class.png", dpi=120); plt.close(fig)
 
+    per_acc = {sc: float((preds[:, i] == Y[:, i]).mean())
+               for i, sc in enumerate(config.SUPERCLASSES)}
+    subset_acc = float((preds == Y).all(axis=1).mean())
+    hamming_acc = float((preds == Y).mean())
+
     imp = _feature_importances(model, bundle["feature_names"])
     return {"model": bundle["name"], "macro_auc": macro_auc, "micro_auc": micro_auc,
-            "per_auc": per_auc, "per_f1": per_f1, "importances": imp, "n_test": len(test_idx)}
+            "per_auc": per_auc, "per_f1": per_f1, "per_acc": per_acc,
+            "subset_acc": subset_acc, "hamming_acc": hamming_acc,
+            "importances": imp, "n_test": len(test_idx)}
 
 
 # --- binary figures + metrics ---------------------------------------------
@@ -197,134 +204,36 @@ def fig_feature_importance(ml: dict, bi: dict, feats, labels, test_idx) -> list[
 
 
 # --- report generation -----------------------------------------------------
-def write_report(eda, ml, bi, top_feats):
-    p = lambda d: ", ".join(f"{k} {v:.0%}" for k, v in d.items())
-    best_sc = max(ml["per_auc"], key=ml["per_auc"].get)
-    worst_sc = min(ml["per_auc"], key=ml["per_auc"].get)
+def write_report(eda, ml, bi, top_feats, labels):
+    """Build the metric context and render every language version."""
+    from . import report_templates as rt
+
     cm = bi["cm"]
     tn, fp, fn, tp = cm[0][0], cm[0][1], cm[1][0], cm[1][1]
-    sens = tp / (tp + fn) if (tp + fn) else 0
-    spec = tn / (tn + fp) if (tn + fp) else 0
-    feat_lines = "\n".join(f"{i+1}. `{f}`" for i, f in enumerate(top_feats[:10]))
-
-    report = f"""# ECG Arrhythmia Analyzer: Results Report
-
-Classical signal-processing + machine-learning pipeline over **PTB-XL**
-(12-lead ECG, 100 Hz). Models are trained on strat-folds 1-8, selected on
-fold 9, and all numbers below are on the **held-out test fold 10**
-({ml['n_test']} records).
-
-| Task | Best model | Headline metric |
-|------|-----------|-----------------|
-| 5-superclass (multi-label) | `{ml['model']}` | macro-AUC **{ml['macro_auc']:.3f}** (micro {ml['micro_auc']:.3f}) |
-| Binary normal vs abnormal | `{bi['model']}` | ROC-AUC **{bi['auc']:.3f}**, acc {bi['acc']:.3f}, F1 {bi['f1']:.3f} |
-
----
-
-## 1. Dataset composition: `eda_class_prevalence.png`
-
-![class prevalence](figures/eda_class_prevalence.png)
-
-The left panel shows diagnostic-superclass prevalence ({p(eda['prevalence'])});
-because PTB-XL is multi-label these sum past 100%. The right panel shows the
-binary split ({eda['binary_abnormal']:.0%} abnormal).
-
-**Analysis.** The dataset is **imbalanced**: NORM dominates while HYP is rare
-(~{eda['prevalence']['HYP']:.0%}). This directly predicts where the models
-struggle: minority classes have fewer positive examples to learn from, and that
-is why every classifier below uses `class_weight="balanced"` and why we report
-AUC/F1 rather than raw accuracy.
-
-## 2. Signal quality: `ecg_sample.png`
-
-![sample ECG](figures/ecg_sample.png)
-
-A single preprocessed record, all 12 leads, with detected R-peaks (red ×) on
-lead II.
-
-**Analysis.** This validates the front of the pipeline: the 0.5-40 Hz
-Butterworth bandpass has removed baseline wander (traces are centred) and the
-R-peak detector fires on QRS complexes, not noise. Those peaks drive the
-HRV/rhythm features, so a clean detection here is the prerequisite for the
-rhythm-related features being meaningful.
-
-## 3. Multi-label discrimination: `multilabel_roc.png`
-
-![multilabel ROC](figures/multilabel_roc.png)
-
-Per-superclass ROC curves; macro-AUC **{ml['macro_auc']:.3f}**.
-
-**Analysis.** All five curves sit well above the diagonal, so hand-crafted
-features carry real diagnostic signal. **{best_sc}** is easiest
-(AUC {ml['per_auc'][best_sc]:.3f}) and **{worst_sc}** hardest
-(AUC {ml['per_auc'][worst_sc]:.3f}). The harder classes are the ones whose
-signature is subtle or spread across leads, where a fixed feature set loses to
-morphology a CNN would learn end-to-end.
-
-## 4. Per-class AUC vs F1: `multilabel_per_class.png`
-
-![per class](figures/multilabel_per_class.png)
-
-AUC (ranking quality) beside F1 (quality at the 0.5 threshold) per class.
-
-**Analysis.** AUC stays high while **F1 drops for rare classes**, the
-classic imbalance gap. A model can rank {worst_sc} positives correctly
-(good AUC) yet still miss them at a fixed 0.5 cut (low F1). Practically this
-says the operating threshold should be tuned per class rather than left at 0.5.
-
-## 5. Binary confusion matrix: `binary_confusion.png`
-
-![confusion](figures/binary_confusion.png)
-
-Normal-vs-abnormal at threshold 0.5. Sensitivity **{sens:.1%}**,
-specificity **{spec:.1%}**.
-
-**Analysis.** For a screening tool the costly error is the bottom-left cell
-({fn} false negatives, abnormal ECGs called normal). Sensitivity
-{sens:.1%} vs specificity {spec:.1%} shows the current trade-off; lowering the
-threshold would catch more abnormals at the cost of more false alarms (see the
-PR curve next).
-
-## 6. Binary ROC & precision-recall: `binary_roc_pr.png`
-
-![roc pr](figures/binary_roc_pr.png)
-
-ROC-AUC **{bi['auc']:.3f}**, average precision **{bi['ap']:.3f}**.
-
-**Analysis.** ROC summarizes threshold-independent separability; the PR curve
-is the more honest view under imbalance and sits well above the
-{eda['binary_abnormal']:.2f} baseline. Together they let you pick an operating
-point for a target sensitivity instead of accepting the default threshold.
-
-## 7. What the model keys on: `feature_importance.png`
-
-![importance](figures/feature_importance.png)
-
-Top-20 features by importance.
-
-**Analysis.** The most informative features are dominated by:
-
-{feat_lines}
-
-These tie back to recognizable physiology: per-lead shape statistics
-(skew, zero-crossing rate) reflect QRS/T morphology, the spectral band powers
-capture waveform frequency content, and the HRV terms capture rhythm. That
-interpretability is the upside of the classical approach.
-
----
-
-## Takeaways & next steps
-
-* Hand-crafted features reach macro-AUC **{ml['macro_auc']:.3f}** (multi-label)
-  and **{bi['auc']:.3f}** AUC (binary): solid, interpretable baselines.
-* The ceiling is set by class imbalance and by morphology that fixed features
-  miss; published 1-D CNNs reach ~0.93 macro-AUC.
-* Next: per-class threshold tuning, wavelet/template features, and a CNN
-  baseline for comparison.
-"""
-    out = config.PROJECT_ROOT / "REPORT.md"
-    out.write_text(report)
-    print(f"Wrote report -> {out}")
+    idx = data.split_indices(labels)
+    n_abn = int((labels["binary"] == 1).sum())
+    ctx = {
+        "model_ml": ml["model"], "model_bi": bi["model"],
+        "macro_auc": ml["macro_auc"], "micro_auc": ml["micro_auc"],
+        "bi_auc": bi["auc"], "bi_ap": bi["ap"], "bi_f1": bi["f1"], "bi_acc": bi["acc"],
+        "hamming_acc": ml["hamming_acc"], "subset_acc": ml["subset_acc"],
+        "per_auc": ml["per_auc"], "per_f1": ml["per_f1"], "per_acc": ml["per_acc"],
+        "prevalence": eda["prevalence"], "binary_abnormal": eda["binary_abnormal"],
+        "counts": {sc: int(labels[sc].sum()) for sc in config.SUPERCLASSES},
+        "n_total": len(labels), "n_abn": n_abn, "n_norm": len(labels) - n_abn,
+        "n_tr": len(idx["train"]), "n_va": len(idx["val"]), "n_te": len(idx["test"]),
+        "n_test": ml["n_test"],
+        "best_sc": max(ml["per_auc"], key=ml["per_auc"].get),
+        "worst_sc": min(ml["per_auc"], key=ml["per_auc"].get),
+        "tn": tn, "fp": fp, "fn": fn, "tp": tp,
+        "sens": tp / (tp + fn) if (tp + fn) else 0.0,
+        "spec": tn / (tn + fp) if (tn + fp) else 0.0,
+        "top_feats": top_feats,
+    }
+    for filename, render in rt.RENDERERS.items():
+        out = config.PROJECT_ROOT / filename
+        out.write_text(render(ctx), encoding="utf-8")
+        print(f"Wrote report -> {out}")
 
 
 def _main() -> None:
@@ -346,7 +255,7 @@ def _main() -> None:
     print(f"multilabel macro-AUC = {ml['macro_auc']:.4f} | binary AUC = {bi['auc']:.4f}")
 
     top = fig_feature_importance(ml, bi, feats, labels, test_idx)
-    write_report(eda, ml, bi, top)
+    write_report(eda, ml, bi, top, labels)
 
 
 if __name__ == "__main__":

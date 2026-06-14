@@ -19,7 +19,8 @@ dataset. Two tasks:
 
 Per-class test AUC: NORM 0.901 · STTC 0.888 · CD 0.871 · MI 0.837 · HYP 0.797.
 
-See **[REPORT.md](REPORT.md)** for every figure with a per-graph analysis.
+See the full report for every figure with a per-graph analysis:
+**[English](REPORT.md)** · **[ไทย](report_th.md)** · **[Tiếng Việt](report_vn.md)**.
 
 ## How it works
 
