@@ -1,0 +1,11 @@
+# Core resume stack
+numpy
+scipy
+scikit-learn
+matplotlib
+# Standard companions for PhysioNet ECG work
+pandas        # tabular metadata (ptbxl_database.csv)
+wfdb          # PhysioNet WFDB signal reader (.dat/.hea)
+joblib        # model persistence
+tqdm          # progress bars
+pyarrow       # parquet cache I/O

@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Data (downloaded separately from PhysioNet)
+physionet.org/
+
+# Generated artifacts
+cache/
+models/
+reports/figures/*.png
+
+# Logs
+*.log
